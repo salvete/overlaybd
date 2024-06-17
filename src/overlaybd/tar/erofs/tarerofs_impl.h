@@ -1,6 +1,14 @@
 #include "erofs/tar.h"
+#include "erofs/io.h"
 #include "erofs/tarerofs_api.h"
 #include <photon/fs/filesystem.h>
+
+
+struct erofs_vfops_wrapper {
+	struct erofs_vfops ops;
+	void *private_data;
+    int magic = 332211;
+};
 
 class TarErofsInter::TarErofsImpl {
 public:
@@ -8,22 +16,35 @@ public:
           photon::fs::IFile *bf = nullptr, bool meta_only = true, bool first_layer = true)
         : file(file), fout(target), fs_base_file(bf), meta_only(meta_only), first_layer(first_layer) {
 
-            io_manager_img.dev_open = dev_open_img;
-            io_manager_img.dev_read = dev_read_img;
-            io_manager_img.dev_write = dev_write_img;
-            io_manager_img.dev_resize = dev_resize_img;
-            io_manager_img.dev_fillzero = dev_fillzero_img;
-            io_manager_img.dev_close = dev_close_img;
-            io_manager_img.private_data = (void*)this;
+		target_vfops.ops.pread = target_pread;
+		target_vfops.ops.pwrite = target_pwrite;
+		target_vfops.ops.fsync = target_fsync;
+		target_vfops.ops.fallocate = target_fallocate;
+		target_vfops.ops.ftruncate = target_ftruncate;
+		target_vfops.ops.read = target_read;
+		target_vfops.ops.lseek = target_lseek;
+		target_vfops.private_data = (void*)this;
 
-            tar_io_manager.read = read_tar;
-            tar_io_manager.private_data = (void*)this;
+		source_vfops.ops.pread = source_pread;
+		source_vfops.ops.pwrite = source_pwrite;
+		source_vfops.ops.fsync = source_fsync;
+		source_vfops.ops.fallocate = source_fallocate;
+		source_vfops.ops.ftruncate = source_ftruncate;
+		source_vfops.ops.read = source_read;
+		source_vfops.ops.lseek = source_lseek;
+		source_vfops.private_data = (void*)this;
 
-            io_manager_base.dev_open_ro = dev_open_ro_base;
-            io_manager_base.dev_read = dev_read_base;
-            io_manager_base.dev_close = dev_close_base;
-            io_manager_base.private_data = (void*)this;
-        }
+		base_vfops.ops.pread = base_pread;
+		base_vfops.ops.pwrite = base_pwrite;
+		base_vfops.ops.fsync = base_fsync;
+		base_vfops.ops.fallocate = base_fallocate;
+		base_vfops.ops.ftruncate = base_ftruncate;
+		base_vfops.ops.read = base_read;
+		base_vfops.ops.lseek = base_lseek;
+		base_vfops.private_data = (void*)this;
+
+        magic = 11223344;
+    }
 
     int extract_all();
 
@@ -33,25 +54,38 @@ public:
     photon::fs::IFile *fs_base_file = nullptr;
     bool meta_only;
     bool first_layer;
-    struct erofs_io_manager io_manager_img;
-    struct erofs_tarerofs_io_manager tar_io_manager;
-    struct erofs_io_manager io_manager_base;
+    struct erofs_vfops_wrapper target_vfops;
+    struct erofs_vfops_wrapper source_vfops;
+    struct erofs_vfops_wrapper base_vfops;
+    int magic;
 public:
-    /* io functions for the output image */
-    static int dev_open_img(struct erofs_sb_info *sbi, const char *devname);
-    static int dev_read_img(struct erofs_sb_info *sbi, int device_id, void *buf, u64 offset, size_t len);
-    static int dev_write_img(struct erofs_sb_info *sbi, const void *buf, u64 offset, size_t len);
-    static int dev_resize_img(struct erofs_sb_info *sbi, erofs_blk_t nblocks);
-    static int dev_fillzero_img(struct erofs_sb_info *sbi, u64 offset,
-		size_t len, bool padding);
-    static void dev_close_img(struct erofs_sb_info *sbi);
+    /* I/O control for target */
+    static ssize_t target_pread(struct erofs_vfile *vf, void *buf, u64 offset, size_t len);
+    static ssize_t target_pwrite(struct erofs_vfile *vf, const void *buf, u64 offset, size_t len);
+    static int target_fsync(struct erofs_vfile *vf);
+    static int target_fallocate(struct erofs_vfile *vf, u64 offset, size_t len, bool pad);
+    static int target_ftruncate(struct erofs_vfile *vf, u64 length);
+    static ssize_t target_read(struct erofs_vfile *vf, void *buf, size_t len);
+    static off_t target_lseek(struct erofs_vfile *vf, u64 offset, int whence);
 
-    /* io functions for tar file*/
-    static u64 read_tar(void *buf, u64 bytes, void *data);
+    /* I/O control for source */
+    static ssize_t source_pread(struct erofs_vfile *vf, void *buf, u64 offset, size_t len);
+    static ssize_t source_pwrite(struct erofs_vfile *vf, const void *buf, u64 offset, size_t len);
+    static int source_fsync(struct erofs_vfile *vf);
+    static int source_fallocate(struct erofs_vfile *vf, u64 offset, size_t len, bool pad);
+    static int source_ftruncate(struct erofs_vfile *vf, u64 length);
+    static ssize_t source_read(struct erofs_vfile *vf, void *buf, size_t len);
+    static off_t source_lseek(struct erofs_vfile *vf, u64 offset, int whence);
 
-    /* io functions for the base image in the --base mode */
-    static int dev_open_ro_base(struct erofs_sb_info *sbi, const char *dev);
-    static int dev_read_base(struct erofs_sb_info *sbi, int device_id,
-	    void *buf, u64 offset, size_t len);
-    static void dev_close_base(struct erofs_sb_info *sbi);
+    /* I/O control for base image */
+    static ssize_t base_pread(struct erofs_vfile *vf, void *buf, u64 offset, size_t len);
+    static ssize_t base_pwrite(struct erofs_vfile *vf, const void *buf, u64 offset, size_t len);
+    static int base_fsync(struct erofs_vfile *vf);
+    static int base_fallocate(struct erofs_vfile *vf, u64 offset, size_t len, bool pad);
+    static int base_ftruncate(struct erofs_vfile *vf, u64 length);
+    static ssize_t base_read(struct erofs_vfile *vf, void *buf, size_t len);
+    static off_t base_lseek(struct erofs_vfile *vf, u64 offset, int whence);
+
+    /* helper function */
+    static TarErofsImpl *ops_to_tarerofsimpl(struct erofs_vfops *ops);
 };

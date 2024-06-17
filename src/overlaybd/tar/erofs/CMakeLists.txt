@@ -3,7 +3,7 @@ include(FetchContent)
 FetchContent_Declare(
     erofs-utils
     GIT_REPOSITORY https://gitee.com/salvete/erofs-utils.git
-    GIT_TAG        overlaybd-dev-rebased-api-3
+    GIT_TAG      overlaybd-api 
 )
 
 FetchContent_MakeAvailable(erofs-utils)
@@ -31,6 +31,7 @@ add_library(erofs_lib STATIC ${EROFS_SOURCE})
 
 target_include_directories(erofs_lib PRIVATE
     ${PHOTON_INCLUDE_DIR}
+    ${rapidjson_SOURCE_DIR}/include
 )
 
 target_include_directories(erofs_lib PRIVATE
