@@ -3,7 +3,7 @@ include(FetchContent)
 FetchContent_Declare(
     erofs-utils
     GIT_REPOSITORY https://gitee.com/salvete/erofs-utils.git
-    GIT_TAG      overlaybd-api 
+    GIT_TAG      overlaybd-incremental-io
 )
 
 FetchContent_MakeAvailable(erofs-utils)

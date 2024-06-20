@@ -1,13 +1,11 @@
 #include "erofs/tar.h"
 #include "erofs/io.h"
-#include "erofs/tarerofs_api.h"
 #include <photon/fs/filesystem.h>
 
 
 struct erofs_vfops_wrapper {
 	struct erofs_vfops ops;
 	void *private_data;
-    int magic = 332211;
 };
 
 class TarErofsInter::TarErofsImpl {
@@ -33,17 +31,6 @@ public:
 		source_vfops.ops.read = source_read;
 		source_vfops.ops.lseek = source_lseek;
 		source_vfops.private_data = (void*)this;
-
-		base_vfops.ops.pread = base_pread;
-		base_vfops.ops.pwrite = base_pwrite;
-		base_vfops.ops.fsync = base_fsync;
-		base_vfops.ops.fallocate = base_fallocate;
-		base_vfops.ops.ftruncate = base_ftruncate;
-		base_vfops.ops.read = base_read;
-		base_vfops.ops.lseek = base_lseek;
-		base_vfops.private_data = (void*)this;
-
-        magic = 11223344;
     }
 
     int extract_all();
@@ -56,8 +43,6 @@ public:
     bool first_layer;
     struct erofs_vfops_wrapper target_vfops;
     struct erofs_vfops_wrapper source_vfops;
-    struct erofs_vfops_wrapper base_vfops;
-    int magic;
 public:
     /* I/O control for target */
     static ssize_t target_pread(struct erofs_vfile *vf, void *buf, u64 offset, size_t len);
@@ -76,15 +61,6 @@ public:
     static int source_ftruncate(struct erofs_vfile *vf, u64 length);
     static ssize_t source_read(struct erofs_vfile *vf, void *buf, size_t len);
     static off_t source_lseek(struct erofs_vfile *vf, u64 offset, int whence);
-
-    /* I/O control for base image */
-    static ssize_t base_pread(struct erofs_vfile *vf, void *buf, u64 offset, size_t len);
-    static ssize_t base_pwrite(struct erofs_vfile *vf, const void *buf, u64 offset, size_t len);
-    static int base_fsync(struct erofs_vfile *vf);
-    static int base_fallocate(struct erofs_vfile *vf, u64 offset, size_t len, bool pad);
-    static int base_ftruncate(struct erofs_vfile *vf, u64 length);
-    static ssize_t base_read(struct erofs_vfile *vf, void *buf, size_t len);
-    static off_t base_lseek(struct erofs_vfile *vf, u64 offset, int whence);
 
     /* helper function */
     static TarErofsImpl *ops_to_tarerofsimpl(struct erofs_vfops *ops);
