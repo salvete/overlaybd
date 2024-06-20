@@ -1,11 +1,12 @@
 #include "tarerofs_interface.h"
 #include "tarerofs_impl.h"
-#include "erofs/tarerofs_api.h"
 #include "erofs/tar.h"
 #include "erofs/io.h"
+#include "erofs/cache.h"
+#include "erofs/block_list.h"
+#include "erofs/inode.h"
 #include "../../lsmt/file.h"
 #include "../../lsmt/index.h"
-#include "../../../image_file.h"
 #include <photon/common/alog.h>
 
 #define TAREROFS_BLOCK_SIZE 4096
@@ -15,49 +16,6 @@
 #define round_down_blk(addr) ((addr) & (~(MIN_RW_LEN - 1)))
 #define round_up_blk(addr) (round_down_blk((addr) + MIN_RW_LEN - 1))
 #define MAP_FILE_NAME "upper.map"
-
-/* debug */
-void write_to_file(const char *msg, ...)
-{
-        char *erofs_out_file = "/home/hongzhen/tarerofs_impl.txt";
-        
-        int buf_size = 100;
-         char buffer[buf_size];
-        // 打开文件，以追加模式。如果文件不存在，创建文件，权限为 0644（用户可读写，组和其他用户可读）
-        int fd = open(erofs_out_file, O_WRONLY | O_APPEND | O_CREAT, 0644);
-        if (fd == -1) {
-                perror("Error opening file");
-                return;
-        }
-
-
-        // 处理可变参数并生成格式化字符串
-        va_list args;
-        va_start(args, msg);
-        vsnprintf(buffer, buf_size, msg, args);
-        va_end(args);
-        // 计算字符串的长度
-        size_t len = strlen(buffer);
-
-        buffer[len] = '\n';
-
-        // 写入字符串到文件
-        ssize_t written = write(fd, buffer, len);
-        if (written == -1) {
-                perror("Error writing to file");
-                close(fd);
-                return;
-        } else if (written != (ssize_t)len) {
-                fprintf(stderr, "Partial write error: wrote %zd of %zu bytes\n", written, len);
-                close(fd);
-                return;
-        }
-
-        // 关闭文件
-        if (close(fd) == -1) {
-                perror("Error closing file");
-        }
-}
 
 /*
  * Helper function for reading from the photon file, since
@@ -91,7 +49,7 @@ static ssize_t read_photon_file(void *buf, u64 offset, size_t len, photon::fs::I
  */
  static ssize_t write_photon_file(const void *buf, u64 offset, size_t len, photon::fs::IFile *file)
  {
-     size_t ret;
+     ssize_t ret;
      u64 start, end;
      size_t saved_len = len;
      char *big_buf;
@@ -281,48 +239,88 @@ off_t TarErofsInter::TarErofsImpl::source_lseek(struct erofs_vfile *vf, u64 offs
 }
 
 
-/* I/O control for base */
-ssize_t TarErofsInter::TarErofsImpl::base_pread(struct erofs_vfile *vf, void *buf, u64 offset, size_t len)
-{
-    TarErofsImpl *obj = ops_to_tarerofsimpl(vf->ops);
-    photon::fs::IFile *fs_base_file = obj->fs_base_file;
+struct erofs_mkfs_cfg {
+    struct erofs_sb_info *sbi;
+    struct erofs_tarfile *erofstar;
+    bool incremental;
+    bool ovlfs_strip;
+};
 
-    if (read_photon_file(buf, offset, len, fs_base_file) != (ssize_t)len)
-        return -1;
-    
-    return len;
-}
+static int rebuild_src_count;
 
-ssize_t TarErofsInter::TarErofsImpl::base_pwrite(struct erofs_vfile *vf, const void *buf, u64 offset, size_t len)
-{
-    return -1;
-}
+int erofs_mkfs(struct erofs_mkfs_cfg *cfg) {
+    int err;
+    struct erofs_tarfile *erofstar;
+    struct erofs_sb_info *sbi;
+    struct erofs_buffer_head *sb_bh;
+    struct erofs_inode *root;
+    erofs_blk_t nblocks;
 
-int TarErofsInter::TarErofsImpl::base_fsync(struct erofs_vfile *vf)
-{
-    return -1;
-}
+    erofstar = cfg->erofstar;
+    sbi = cfg->sbi;
+    if (!erofstar || !sbi)
+        return -EINVAL;
 
-int TarErofsInter::TarErofsImpl::base_fallocate(struct erofs_vfile *vf, u64 offset, size_t len, bool pad)
-{
-    return -1;
-}
-
-int TarErofsInter::TarErofsImpl::base_ftruncate(struct erofs_vfile *vf, u64 length)
-{
-    return -1;
-}
+    if (!erofstar->mapfile)
+        return -EINVAL;
 
 
-ssize_t TarErofsInter::TarErofsImpl::base_read(struct erofs_vfile *vf, void *buf, size_t len)
-{
-    return -1;
-}
+    err = erofs_blocklist_open(erofstar->mapfile, true);
+    if (err)
+        return err;
 
+    if (!erofstar->rvsp_mode)
+        return -EINVAL;
 
-off_t TarErofsInter::TarErofsImpl::base_lseek(struct erofs_vfile *vf, u64 offset, int whence)
-{
-    return -1;
+    if (!cfg->incremental) {
+        sb_bh = erofs_reserve_sb(sbi);
+        if (IS_ERR(sb_bh)) {
+            err =  PTR_ERR(sb_bh);
+            goto exit;
+        }
+        //erofs_uuid_generate(sbi->uuid);
+    } else {
+        err = erofs_read_superblock(sbi);
+        if (err)
+            goto exit;
+        erofs_buffer_init(sbi, sbi->primarydevice_blocks);
+        sb_bh = NULL;
+    }
+
+    erofs_inode_manager_init();
+
+    root = erofs_mkfs_alloc_root(sbi);
+    if (IS_ERR(root)) {
+        err = PTR_ERR(root);
+        goto exit;
+    }
+
+    while (!(err = tarerofs_parse_tar(root, erofstar)));
+    if (err < 0)
+        goto exit;
+
+    err = erofs_rebuild_dump_tree(root, cfg->incremental, cfg->ovlfs_strip);
+    if (err < 0)
+        goto exit;
+
+    err = erofs_bflush(NULL);
+    if (err)
+        goto exit;
+
+    erofs_fixup_root_inode(root);
+    erofs_iput(root);
+    root = NULL;
+
+    err = erofs_writesb(sbi, sb_bh, &nblocks);
+    if (err)
+        goto exit;
+
+    err = erofs_dev_resize(sbi, nblocks);
+    if (!err && erofs_sb_has_sb_chksum(sbi))
+        err = erofs_sb_csum_set(sbi);
+exit:
+    erofs_blocklist_close();
+    return err;
 }
 
 static int init_sbi(struct erofs_sb_info *sbi, photon::fs::IFile *fout, struct erofs_vfops *ops)
@@ -349,9 +347,10 @@ static int init_tar(struct erofs_tarfile *erofstar, photon::fs::IFile *tar_file,
     struct stat st;
 
     erofstar->global.xattrs = LIST_HEAD_INIT(erofstar->global.xattrs);
-    erofstar->index_mode = true;
     erofstar->mapfile = MAP_FILE_NAME;
     erofstar->aufs = true;
+    erofstar->rvsp_mode = true;
+    erofstar->dev = rebuild_src_count + 1;
 
     erofstar->ios.feof = false;
     erofstar->ios.tail = erofstar->ios.head = 0;
@@ -410,8 +409,6 @@ static void close_sbi(struct erofs_sb_info *sbi)
 
 static void close_tar(struct erofs_tarfile *erofstar)
 {
-    if (erofstar->base)
-        free(erofstar->base);
     free(erofstar->ios.buffer);
 }
 
@@ -437,19 +434,9 @@ int TarErofsInter::TarErofsImpl::extract_all() {
         return err;
     }
 
-    if (!first_layer) {
-        erofstar.base = (struct erofs_vfile*)malloc(sizeof(struct erofs_vfile));
-        if (!erofstar.base) {
-            LOG_ERROR("Failed to malloc erofstar.base");
-            return -ENOMEM;
-        }
-        erofstar.base->ops = reinterpret_cast<struct erofs_vfops*>(&base_vfops);
-    }
-
     cfg.sbi = &sbi;
     cfg.erofstar = &erofstar;
-    cfg.data_offset = DATA_OFFSET;
-    cfg.append_mode = !first_layer;
+    cfg.incremental = !first_layer;
     cfg.ovlfs_strip = true;
 
     err = erofs_mkfs(&cfg);

@@ -3,7 +3,7 @@ include(FetchContent)
 FetchContent_Declare(
     erofs-utils
     GIT_REPOSITORY https://gitee.com/salvete/erofs-utils.git
-    GIT_TAG      overlaybd-api 
+    GIT_TAG      overlaybd-incremental-io
 )
 
 FetchContent_MakeAvailable(erofs-utils)
@@ -13,7 +13,7 @@ execute_process(
     WORKING_DIRECTORY ${erofs-utils_SOURCE_DIR}
 )
 execute_process(
-    COMMAND ./configure 
+    COMMAND ./configure --disable-lz4 --disable-lzma --without-libzstd --without-uuid 
     WORKING_DIRECTORY ${erofs-utils_SOURCE_DIR}
 )
 execute_process(
@@ -37,10 +37,6 @@ target_include_directories(erofs_lib PRIVATE
 target_include_directories(erofs_lib PRIVATE
     ${EROFS_LIB_INCLUDE_DIR}
 )
-
-target_link_libraries(erofs_lib PRIVATE uuid)
-target_link_libraries(erofs_lib PRIVATE lz4)
-target_link_libraries(erofs_lib PRIVATE lzma)
 
 target_compile_options(erofs_lib PRIVATE "-include${EROFS_CONFIG_FILE}")
 target_link_libraries(erofs_lib PRIVATE ${EROFS_LIB_STATIC})
