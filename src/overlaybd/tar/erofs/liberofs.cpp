@@ -8,6 +8,7 @@
 #include "erofs/inode.h"
 #include "erofs/config.h"
 #include "erofs/dir.h"
+#include "erofs/xattr.h"
 #include "../../lsmt/file.h"
 #include "../../lsmt/index.h"
 #include <photon/common/alog.h>
