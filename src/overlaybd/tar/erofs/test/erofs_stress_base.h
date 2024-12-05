@@ -199,10 +199,14 @@ public:
 	bool is_emtry() {
 		return tree.empty();
 	}
+
+	std::string get_same_name(int idx, int depth, std::string root_path, NODE_TYPE type);
 };
 
 class StressBase: public StressGenInter {
 public:
+	StressFsTree *tree;
+
 	StressBase(std::string path, int num): prefix(path), num_layers(num) {
 		host_fs = photon::fs::new_localfs_adaptor();
 		if (!host_fs)
@@ -231,7 +235,6 @@ private:
 	photon::fs::IFileSystem *host_fs;
 	bool workdir_exists;
 
-	StressFsTree *tree;
 	bool create_layer(int idx);
 	LSMT::IFileRW *mkfs();
 	bool verify(photon::fs::IFileSystem *erofs_fs);
