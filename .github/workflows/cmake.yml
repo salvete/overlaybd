@@ -4,6 +4,7 @@ on:
   push:
     branches:
     - main
+    - test-erofs
   pull_request:
     branches:
     - main
