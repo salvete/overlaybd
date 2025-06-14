@@ -86,6 +86,8 @@ extern ssize_t erofs_target_pread(struct erofs_vfile *vf, void *buf,
 				  u64 offset, size_t len);
 extern ssize_t erofs_target_pwrite(struct erofs_vfile *vf, const void *buf,
 				   u64 offset, size_t len);
+extern ssize_t erofs_target_pwritev(struct erofs_vfile *vf, const struct iovec *iov,
+				    int iovcnt, u64 pos);
 extern int erofs_target_fsync(struct erofs_vfile *vf);
 extern int erofs_target_fallocate(struct erofs_vfile *vf, u64 offset,
 				  size_t len, bool pad);

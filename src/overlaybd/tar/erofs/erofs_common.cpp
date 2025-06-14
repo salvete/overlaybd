@@ -295,6 +295,31 @@ ssize_t erofs_target_pwrite(struct erofs_vfile *vf, const void *buf,
 	return erofs_write_photon_file(buf, offset, len, target_file->cache);
 }
 
+ssize_t erofs_target_pwritev(struct erofs_vfile *vf, const struct iovec *iov,
+			     int iovcnt, u64 pos)
+{
+	struct liberofs_file *target_file =
+			reinterpret_cast<struct liberofs_file *>(vf->ops);
+	ssize_t written = 0, ret;
+	int i;
+
+	if (!target_file)
+		return -EINVAL;
+
+	for (i = 0; i < iovcnt; ++i) {
+		ret = erofs_write_photon_file(iov[i].iov_base, pos, iov[i].iov_len, target_file->cache);
+		if (ret < (ssize_t)iov[i].iov_len) {
+			if (ret < 0)
+				return ret;
+			return written + ret;
+		}
+		written += iov[i].iov_len;
+		pos += iov[i].iov_len;
+	}
+
+	return written;
+}
+
 int erofs_target_fsync(struct erofs_vfile *vf)
 {
 	struct liberofs_file *target_file =

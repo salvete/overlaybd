@@ -34,7 +34,6 @@ int erofs_mkfs(struct erofs_mkfs_cfg *mkfs_cfg)
     struct erofs_sb_info *sbi;
     struct erofs_buffer_head *sb_bh;
     struct erofs_inode *root = NULL;
-    erofs_blk_t nblocks;
 
     erofstar = mkfs_cfg->erofstar;
     sbi = mkfs_cfg->sbi;
@@ -105,6 +104,9 @@ int erofs_mkfs(struct erofs_mkfs_cfg *mkfs_cfg)
        }
     }
 
+	sbi->primarydevice_blocks =
+		roundup(erofs_mapbh(sbi->bmgr, NULL), 1);
+
     err = erofs_bflush(sbi->bmgr, NULL);
     if (err) {
         LOG_ERROR("[erofs] Bflush failed.");
@@ -115,7 +117,7 @@ int erofs_mkfs(struct erofs_mkfs_cfg *mkfs_cfg)
     erofs_iput(root);
     root = NULL;
 
-    err = erofs_writesb(sbi, sb_bh, &nblocks);
+    err = erofs_writesb(sbi, sb_bh);
     if (err) {
         LOG_ERROR("[erofs] Fail to writesb");
         goto exit;
@@ -126,7 +128,7 @@ int erofs_mkfs(struct erofs_mkfs_cfg *mkfs_cfg)
     if (err)
         goto exit;
 
-    err = erofs_dev_resize(sbi, nblocks);
+    err = erofs_dev_resize(sbi, sbi->primarydevice_blocks);
 exit:
     if (root)
         erofs_iput(root);
@@ -243,6 +245,7 @@ int LibErofs::extract_tar(photon::fs::IFile *source, bool meta_only, bool first_
     target_file.ops.pwrite = erofs_target_pwrite;
     target_file.ops.pread = erofs_target_pread;
     target_file.ops.pwrite = erofs_target_pwrite;
+    target_file.ops.pwritev = erofs_target_pwritev;
     target_file.ops.fsync = erofs_target_fsync;
     target_file.ops.fallocate = erofs_target_fallocate;
     target_file.ops.ftruncate = erofs_target_ftruncate;
